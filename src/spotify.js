@@ -48,7 +48,7 @@ async function api(path, params, userToken) {
     throw new Error('Connexion Spotify requise — reconnecte-toi pour lire cet element');
   }
   let fellBack = false;
-  for (let attempt = 0; attempt < 6; attempt++) {
+  for (let attempt = 0; attempt < 4; attempt++) {
     const token = (userToken && !fellBack ? userToken : null) || (await getAppToken());
     const url = new URL(API_BASE + path);
     if (params) {
@@ -63,7 +63,7 @@ async function api(path, params, userToken) {
       console.log(`[api] ${ms}ms ${res.status} ${path}`);
     }
     if (res.status === 429) {
-      const waitMs = Math.min(Number(res.headers.get('retry-after') || 1) * 1000, 15000);
+      const waitMs = Math.min(Number(res.headers.get('retry-after') || 1) * 1000, 5000);
       await new Promise((r) => setTimeout(r, waitMs));
       continue;
     }
@@ -369,13 +369,26 @@ async function fetchLikedTracksCollection(userToken) {
 }
 
 async function fetchLibrary(userToken) {
-  const [playlists, albums, likedFirst] = await Promise.all([
+  const [pl, al, lk] = await Promise.allSettled([
     fetchUserPlaylists(userToken),
     fetchUserAlbums(userToken),
-    api('/me/tracks', { limit: 1 }, userToken).catch(() => null),
+    api('/me/tracks', { limit: 1 }, userToken),
   ]);
-  const likedTotal = likedFirst && likedFirst.total != null ? likedFirst.total : 0;
-  return { playlists, albums, likedTotal };
+  const warnings = [];
+  for (const [label, r] of [['Playlists', pl], ['Albums', al], ['Titres likés', lk]]) {
+    if (r.status === 'rejected') {
+      const msg = (r.reason && r.reason.message) || 'erreur inconnue';
+      if (/reconnecte-toi|expirée|scope/i.test(msg)) throw r.reason;
+      warnings.push(`${label} : ${msg}`);
+    }
+  }
+  const likedFirst = lk.status === 'fulfilled' ? lk.value : null;
+  return {
+    playlists: pl.status === 'fulfilled' ? pl.value : [],
+    albums: al.status === 'fulfilled' ? al.value : [],
+    likedTotal: likedFirst && likedFirst.total != null ? likedFirst.total : 0,
+    warnings,
+  };
 }
 
 async function searchTracks(query, userToken, limit = 20) {
