@@ -124,24 +124,51 @@ function normalizeTrack(t, coverFallback) {
   };
 }
 
+async function collectPages(path, params, userToken, pageSize, firstPage) {
+  const pages = [firstPage];
+  const total = firstPage.total != null ? firstPage.total : null;
+  const baseOffset = firstPage.offset != null ? firstPage.offset : 0;
+  if (firstPage.next && total != null) {
+    const offsets = [];
+    for (let o = baseOffset + pageSize; o < total; o += pageSize) offsets.push(o);
+    if (offsets.length) {
+      const out = new Array(offsets.length);
+      let cursor = 0;
+      const workerCount = Math.min(6, offsets.length);
+      await Promise.all(
+        Array.from({ length: workerCount }, async () => {
+          for (;;) {
+            const i = cursor++;
+            if (i >= offsets.length) break;
+            out[i] = await api(path, { ...params, limit: pageSize, offset: offsets[i] }, userToken);
+          }
+        })
+      );
+      for (const page of out) if (page) pages.push(page);
+    }
+  } else if (firstPage.next) {
+    let offset = baseOffset + (firstPage.items ? firstPage.items.length : pageSize);
+    for (;;) {
+      const page = await api(path, { ...params, limit: pageSize, offset }, userToken);
+      pages.push(page);
+      if (!page.next || !page.items || page.items.length === 0) break;
+      offset += page.items.length;
+    }
+  }
+  return pages;
+}
 async function fetchPlaylist(id, userToken) {
   const meta = await api(`/playlists/${id}`, { market: market() }, userToken);
+  const params = { market: market() };
+  const first = await api(`/playlists/${id}/tracks`, { ...params, limit: 100, offset: 0 }, userToken);
+  const pages = await collectPages(`/playlists/${id}/tracks`, params, userToken, 100, first);
   const tracks = [];
-  let offset = 0;
-  for (;;) {
-    const page = await api(
-      `/playlists/${id}/tracks`,
-      { market: market(), limit: 100, offset },
-      userToken
-    );
-    const items = page.items || [];
-    for (const item of items) {
+  for (const page of pages) {
+    for (const item of page.items || []) {
       const t = item && item.track;
       if (!t) continue;
       tracks.push(normalizeTrack(t));
     }
-    offset += items.length;
-    if (!page.next || items.length === 0) break;
   }
   return {
     type: 'playlist',
@@ -159,18 +186,16 @@ async function fetchAlbum(id, userToken) {
   const meta = await api(`/albums/${id}`, { market: market() }, userToken);
   const cover = pickImage(meta.images);
   const items = (meta.tracks && meta.tracks.items ? meta.tracks.items : []).slice();
-  let offset = items.length;
   const total = meta.tracks ? meta.tracks.total : items.length;
-  while (offset < total) {
-    const page = await api(
+  if (items.length < total) {
+    const params = { market: market() };
+    const first = await api(
       `/albums/${id}/tracks`,
-      { market: market(), limit: 50, offset },
+      { ...params, limit: 50, offset: items.length },
       userToken
     );
-    const pageItems = page.items || [];
-    items.push(...pageItems);
-    offset += pageItems.length;
-    if (pageItems.length === 0) break;
+    const pages = await collectPages(`/albums/${id}/tracks`, params, userToken, 50, first);
+    for (const page of pages) items.push(...(page.items || []));
   }
   const full = new Map();
   const ids = items.map((t) => t.id).filter(Boolean);
@@ -207,8 +232,10 @@ async function fetchTrack(id, userToken) {
 }
 
 async function fetchArtist(id, userToken) {
-  const meta = await api(`/artists/${id}`, {}, userToken);
-  const top = await api(`/artists/${id}/top-tracks`, { country: market() }, userToken);
+  const [meta, top] = await Promise.all([
+    api(`/artists/${id}`, {}, userToken),
+    api(`/artists/${id}/top-tracks`, { country: market() }, userToken),
+  ]);
   const tracks = (top.tracks || []).map((t) => normalizeTrack(t));
   return {
     type: 'artist',
@@ -252,36 +279,41 @@ async function fetchMe(userToken) {
 }
 
 async function fetchUserPlaylists(userToken, limit = 50) {
-  const items = [];
+  const entries = [];
   let offset = 0;
   for (;;) {
     const page = await api('/me/playlists', { limit: 50, offset }, userToken);
     const batch = page.items || [];
     for (const p of batch) {
-      let trackTotal = p.tracks && p.tracks.total != null ? p.tracks.total : null;
-      if (trackTotal == null) {
-        try {
-          const full = await api(`/playlists/${p.id}`, { fields: 'tracks(total)' }, userToken);
-          trackTotal = full.tracks && full.tracks.total != null ? full.tracks.total : 0;
-        } catch {
-          trackTotal = 0;
-        }
-      }
-      items.push({
-        id: p.id,
-        name: p.name,
-        description: p.description || '',
-        cover: pickImage(p.images),
-        owner: p.owner ? p.owner.display_name : '',
-        trackTotal,
-        public: p.public,
-        collaborative: p.collaborative,
+      entries.push({
+        p,
+        trackTotal: p.tracks && p.tracks.total != null ? p.tracks.total : null,
       });
     }
     offset += batch.length;
-    if (!page.next || batch.length === 0 || items.length >= limit) break;
+    if (!page.next || batch.length === 0 || entries.length >= limit) break;
   }
-  return items.slice(0, limit);
+  const missing = entries.filter((x) => x.trackTotal == null);
+  await Promise.all(
+    missing.map(async (x) => {
+      try {
+        const full = await api(`/playlists/${x.p.id}`, { fields: 'tracks(total)' }, userToken);
+        x.trackTotal = full.tracks && full.tracks.total != null ? full.tracks.total : 0;
+      } catch {
+        x.trackTotal = 0;
+      }
+    })
+  );
+  return entries.slice(0, limit).map(({ p, trackTotal }) => ({
+    id: p.id,
+    name: p.name,
+    description: p.description || '',
+    cover: pickImage(p.images),
+    owner: p.owner ? p.owner.display_name : '',
+    trackTotal,
+    public: p.public,
+    collaborative: p.collaborative,
+  }));
 }
 
 async function fetchUserAlbums(userToken, limit = 50) {
@@ -309,18 +341,15 @@ async function fetchUserAlbums(userToken, limit = 50) {
 }
 
 async function fetchLikedTracksCollection(userToken) {
+  const first = await api('/me/tracks', { limit: 50, offset: 0 }, userToken);
+  const pages = await collectPages('/me/tracks', {}, userToken, 50, first);
   const tracks = [];
-  let offset = 0;
-  for (;;) {
-    const page = await api('/me/tracks', { limit: 50, offset }, userToken);
-    const items = page.items || [];
-    for (const entry of items) {
+  for (const page of pages) {
+    for (const entry of page.items || []) {
       const t = entry.track;
       if (!t) continue;
       tracks.push(normalizeTrack(t));
     }
-    offset += items.length;
-    if (!page.next || items.length === 0) break;
   }
   return {
     type: 'liked',
@@ -335,17 +364,12 @@ async function fetchLikedTracksCollection(userToken) {
 }
 
 async function fetchLibrary(userToken) {
-  const [playlists, albums] = await Promise.all([
+  const [playlists, albums, likedFirst] = await Promise.all([
     fetchUserPlaylists(userToken),
     fetchUserAlbums(userToken),
+    api('/me/tracks', { limit: 1 }, userToken).catch(() => null),
   ]);
-  let likedTotal = 0;
-  try {
-    const first = await api('/me/tracks', { limit: 1 }, userToken);
-    likedTotal = first.total || 0;
-  } catch {
-    likedTotal = 0;
-  }
+  const likedTotal = likedFirst && likedFirst.total != null ? likedFirst.total : 0;
   return { playlists, albums, likedTotal };
 }
 
