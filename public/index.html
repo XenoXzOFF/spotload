@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SpotLoad — Export Spotify en ZIP</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="logo">
+      <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor" aria-hidden="true">
+        <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
+      </svg>
+      <div>
+        <h1>SpotLoad</h1>
+        <p class="tagline">Exporte tes playlists &amp; albums Spotify en un seul ZIP</p>
+      </div>
+    </div>
+    <div id="auth-area" class="auth-area"></div>
+  </header>
+
+  <div id="banner" class="banner hidden"></div>
+
+  <main>
+    <section class="card add-card">
+      <h2>1. Ajoute un lien Spotify</h2>
+      <p class="hint">Playlist, album, artiste ou titre — un lien à la fois</p>
+      <div class="input-row">
+        <input type="text" id="url-input" placeholder="https://open.spotify.com/playlist/…" autocomplete="off">
+        <button id="add-btn" class="btn btn-primary">Ajouter</button>
+      </div>
+      <div id="add-status" class="status"></div>
+      <div id="errors" class="errors hidden"></div>
+    </section>
+
+    <section class="card search-card">
+      <h2>2. Recherche un titre</h2>
+      <p class="hint">Cherche n'importe quel morceau et ajoute-le avec le bouton +</p>
+      <div class="input-row">
+        <input type="text" id="search-input" placeholder="Ex : Daft Punk — Around the World" autocomplete="off">
+        <button id="search-btn" class="btn btn-primary">Rechercher</button>
+      </div>
+      <div id="search-status" class="status"></div>
+      <div id="search-results" class="search-results hidden"></div>
+    </section>
+
+    <section id="library-section" class="card library-section hidden">
+      <div class="lib-header">
+        <div>
+          <h2>3. Ma bibliothèque</h2>
+          <p class="hint">Clique sur + pour ajouter une playlist ou un album à ta sélection</p>
+        </div>
+        <button id="lib-refresh" class="btn btn-ghost btn-tiny">Rafraîchir</button>
+      </div>
+      <div class="lib-groups">
+        <div class="lib-group">
+          <h3>Playlists</h3>
+          <div id="lib-playlists" class="lib-list"></div>
+        </div>
+        <div class="lib-group">
+          <h3>Albums enregistrés</h3>
+          <div id="lib-albums" class="lib-list"></div>
+        </div>
+        <div class="lib-group">
+          <h3>Titres likés</h3>
+          <div id="lib-liked" class="lib-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="collections"></section>
+
+    <section id="empty-state" class="card empty-state">
+      <p>Ajoute un lien Spotify, recherche un titre, ou connecte-toi pour choisir dans ta bibliothèque</p>
+    </section>
+  </main>
+
+  <div id="detail-overlay" class="detail-overlay hidden">
+    <div class="detail-panel">
+      <div class="detail-header">
+        <div class="detail-info">
+          <span id="detail-badge" class="badge"></span>
+          <h2 id="detail-title"></h2>
+          <p id="detail-desc"></p>
+        </div>
+        <button id="detail-close" class="btn btn-ghost btn-tiny">Fermer</button>
+      </div>
+      <div class="detail-toolbar">
+        <button id="detail-all" class="btn btn-ghost btn-tiny">Tout sélectionner</button>
+        <button id="detail-none" class="btn btn-ghost btn-tiny">Tout désélectionner</button>
+        <div class="detail-page-size">
+          <label for="page-size">Afficher :</label>
+          <select id="page-size">
+            <option value="10">10</option>
+            <option value="20">20</option>
+            <option value="30">30</option>
+            <option value="40">40</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="250">Tous (max 250)</option>
+          </select>
+        </div>
+        <span id="detail-count" class="col-count"></span>
+      </div>
+      <div class="detail-table-wrap">
+        <table class="track-table">
+          <thead>
+            <tr>
+              <th></th>
+              <th class="num">#</th>
+              <th>Titre</th>
+              <th>Artiste(s)</th>
+              <th>Album</th>
+              <th class="dur">Durée</th>
+            </tr>
+          </thead>
+          <tbody id="detail-tbody"></tbody>
+        </table>
+      </div>
+      <div class="detail-pagination">
+        <button id="page-prev" class="btn btn-ghost btn-tiny">← Précédent</button>
+        <span id="page-info"></span>
+        <button id="page-next" class="btn btn-ghost btn-tiny">Suivant →</button>
+      </div>
+    </div>
+  </div>
+
+  <footer id="bottom-bar" class="bottom-bar hidden">
+    <div class="bottom-inner">
+      <div class="bottom-count">
+        <strong id="selected-count">0</strong> titre(s) sélectionné(s)
+      </div>
+      <div class="bottom-actions">
+        <button id="select-all" class="btn btn-ghost">Tout sélectionner</button>
+        <button id="select-none" class="btn btn-ghost">Tout désélectionner</button>
+      </div>
+      <div class="bottom-options">
+        <label><input type="checkbox" id="opt-csv" checked> CSV</label>
+        <label><input type="checkbox" id="opt-json" checked> JSON</label>
+        <label><input type="checkbox" id="opt-m3u" checked> M3U</label>
+        <label><input type="checkbox" id="opt-covers"> Pochettes</label>
+      </div>
+      <button id="zip-btn" class="btn btn-green">Télécharger le ZIP</button>
+    </div>
+    <div id="progress-area" class="progress-area hidden">
+      <div class="progress-track">
+        <div id="progress-fill" class="progress-fill"></div>
+        <span id="progress-label" class="progress-label">0%</span>
+      </div>
+      <div id="progress-text" class="progress-text">Préparation du ZIP…</div>
+    </div>
+  </footer>
+
+  <footer class="site-footer">
+    <p>Created by <a href="https://github.com/XenoXzOFF" target="_blank" rel="noopener">XenoXzOFF</a> with ❤️ — SpotLoad is open source under the MIT License</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

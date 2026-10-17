@@ -1,7 +1,7 @@
 const archiver = require('archiver');
 const { sanitizeFilename, csvEscape } = require('./util');
 
-const TYPE_LABELS = { playlist: 'Playlist', album: 'Album', artist: 'Artiste', track: 'Titre', liked: 'Likés' };
+const TYPE_LABELS = { playlist: 'Playlist', album: 'Album', artist: 'Artiste', track: 'Titre', liked: 'Likés', manual: 'Manuel' };
 const TRACK_HEADER = [
   'track_number',
   'title',
