@@ -170,5 +170,13 @@
   </footer>
 
   <script src="app.js"></script>
+  <script>
+    (function(){
+      var splash=document.getElementById('splash');
+      if(splash){setTimeout(function(){splash.classList.add('splash-hidden');setTimeout(function(){splash.remove()},600)},2400)}
+      var topbar=document.querySelector('.topbar');
+      if(topbar){window.addEventListener('scroll',function(){topbar.classList.toggle('scrolled',window.scrollY>10)},{passive:true})}
+    })();
+  </script>
 </body>
 </html>
