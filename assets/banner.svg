@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 400" fill="none">
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="0%" r="80%">
+      <stop offset="0%" stop-color="#1db954" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#0b0b0f" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="bar" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#1db954"/>
+      <stop offset="100%" stop-color="#1ed760"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="400" rx="24" fill="#0b0b0f"/>
+  <rect width="1200" height="400" rx="24" fill="url(#glow)"/>
+  <g transform="translate(80,120)">
+    <circle cx="48" cy="48" r="48" fill="#1db954"/>
+    <path d="M30 52c12-8 28-10 44-4M28 62c14-9 32-11 50-5M32 72c12-7 26-9 40-4" stroke="#06210f" stroke-width="5" stroke-linecap="round" fill="none"/>
+  </g>
+  <text x="200" y="175" font-family="Arial, Helvetica, sans-serif" font-size="72" font-weight="800" fill="#e8e8ef" letter-spacing="-2">SpotLoad</text>
+  <text x="200" y="225" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="400" fill="#9a9aab">Export your Spotify playlists &amp; albums into a single ZIP</text>
+  <g transform="translate(200,260)">
+    <rect width="140" height="36" rx="18" fill="#16161d" stroke="#2a2a38"/>
+    <text x="70" y="23" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="600" fill="#1db954">CSV</text>
+    <rect x="152" width="140" height="36" rx="18" fill="#16161d" stroke="#2a2a38"/>
+    <text x="222" y="23" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="600" fill="#1db954">JSON</text>
+    <rect x="304" width="140" height="36" rx="18" fill="#16161d" stroke="#2a2a38"/>
+    <text x="374" y="23" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="600" fill="#1db954">M3U</text>
+    <rect x="456" width="160" height="36" rx="18" fill="#16161d" stroke="#2a2a38"/>
+    <text x="536" y="23" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="600" fill="#1db954">Covers</text>
+  </g>
+  <g transform="translate(880,140)">
+    <rect width="240" height="140" rx="16" fill="#16161d" stroke="#2a2a38"/>
+    <text x="24" y="36" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="600" fill="#e8e8ef">spotload_export.zip</text>
+    <rect x="24" y="56" width="192" height="20" rx="10" fill="#0e0e14" stroke="#2a2a38"/>
+    <rect x="24" y="56" width="140" height="20" rx="10" fill="url(#bar)"/>
+    <text x="120" y="71" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="700" fill="#e8e8ef">72%</text>
+    <text x="24" y="100" font-family="Arial, Helvetica, sans-serif" font-size="11" fill="#9a9aab">3 playlists · 1 album · 247 titres</text>
+    <text x="24" y="120" font-family="Arial, Helvetica, sans-serif" font-size="11" fill="#1db954">Téléchargement du ZIP… 8.4 Mo / 11.6 Mo</text>
+  </g>
+  <text x="80" y="360" font-family="Arial, Helvetica, sans-serif" font-size="14" fill="#9a9aab">MIT License · Created by <tspan fill="#1db954" font-weight="600">XenoXzOFF</tspan></text>
+</svg>
