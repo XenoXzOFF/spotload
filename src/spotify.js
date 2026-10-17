@@ -253,13 +253,22 @@ async function fetchUserPlaylists(userToken, limit = 50) {
     const page = await api('/me/playlists', { limit: 50, offset }, userToken);
     const batch = page.items || [];
     for (const p of batch) {
+      let trackTotal = p.tracks && p.tracks.total != null ? p.tracks.total : null;
+      if (trackTotal == null) {
+        try {
+          const full = await api(`/playlists/${p.id}`, { fields: 'tracks(total)' }, userToken);
+          trackTotal = full.tracks && full.tracks.total != null ? full.tracks.total : 0;
+        } catch {
+          trackTotal = 0;
+        }
+      }
       items.push({
         id: p.id,
         name: p.name,
         description: p.description || '',
         cover: pickImage(p.images),
         owner: p.owner ? p.owner.display_name : '',
-        trackTotal: p.tracks ? p.tracks.total : 0,
+        trackTotal,
         public: p.public,
         collaborative: p.collaborative,
       });

@@ -89,11 +89,16 @@ app.get('/api/me', async (req, res) => {
 app.get('/api/library', async (req, res) => {
   try {
     const token = await userTokenFrom(req);
-    if (!token) return res.status(401).json({ error: 'Non connecté' });
+    if (!token) return res.status(401).json({ error: 'Non connecté', relogin: true });
     const library = await fetchLibrary(token);
     res.json(library);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    const msg = e.message || '';
+    if (/reconnecte-toi|expirée|scope/i.test(msg)) {
+      destroySession(req);
+      return res.status(401).json({ error: 'Session expirée — reconnecte-toi avec Spotify', relogin: true });
+    }
+    res.status(500).json({ error: msg });
   }
 });
 
@@ -126,12 +131,18 @@ app.post('/api/collections', async (req, res) => {
     const userToken = await userTokenFrom(req);
     const collections = [];
     const errors = [];
+    let authFailed = false;
     for (const raw of urls) {
       try {
         collections.push(await resolveCollection(raw, userToken));
       } catch (e) {
+        if (/reconnecte-toi|expirée|scope/i.test(e.message || '')) authFailed = true;
         errors.push({ url: String(raw).slice(0, 300), message: e.message });
       }
+    }
+    if (authFailed && collections.length === 0) {
+      destroySession(req);
+      return res.status(401).json({ error: 'Session expirée — reconnecte-toi avec Spotify', relogin: true });
     }
     res.json({ collections, errors });
   } catch (e) {
