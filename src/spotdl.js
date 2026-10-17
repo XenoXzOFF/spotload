@@ -9,24 +9,82 @@ const TMP_BASE = path.join(os.tmpdir(), 'spotload-audio');
 class SpotDLService {
   constructor() {
     this._cmd = null;
+    this._ver = null;
+    this._detectP = null;
     this._jobs = new Map();
     fs.mkdirSync(TMP_BASE, { recursive: true });
   }
 
-  async detect() {
-    if (this._cmd !== null) return this._cmd;
-    const candidates = [
+  detect() {
+    if (this._cmd !== null) return Promise.resolve(this._cmd);
+    if (!this._detectP) {
+      this._detectP = this._doDetect().then((c) => {
+        this._cmd = c || false;
+        if (c) this._run(c.cmd, [...c.prefix, '--version'], 30000).then((v) => { this._ver = v; }).catch(() => {});
+        return this._cmd;
+      });
+    }
+    return this._detectP;
+  }
+
+  async _doDetect() {
+    const m = (cmd) => ({ cmd, prefix: ['-m', 'spotdl'] });
+    const pathCands = [
       { cmd: 'spotdl', prefix: [] },
-      { cmd: 'python', prefix: ['-m', 'spotdl'] },
-      { cmd: 'python3', prefix: ['-m', 'spotdl'] },
+      m('python'), m('python3'),
       { cmd: 'py', prefix: ['-3', '-m', 'spotdl'] },
     ];
-    for (const c of candidates) {
-      const ok = await this._probe(c.cmd, [...c.prefix, '--version']);
-      if (ok) { this._cmd = c; return c; }
+    const found = await this._anyOk(pathCands);
+    if (found) return found;
+    return this._anyOk(this._pythonHomes().map((py) => m(py)));
+  }
+
+  _anyOk(cands) {
+    if (!cands.length) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      let pending = cands.length;
+      for (const c of cands) {
+        this._probe(c.cmd, [...c.prefix, '--version']).then((ok) => {
+          if (ok) resolve(c);
+          else if (--pending === 0) resolve(null);
+        });
+      }
+    });
+  }
+
+  _pythonHomes() {
+    const roots = [];
+    const glob = (base) => {
+      try {
+        for (const e of fs.readdirSync(base)) {
+          if (/^Python\d+/i.test(e)) roots.push(path.join(base, e));
+        }
+      } catch {}
+    };
+    glob('C:\\');
+    glob('C:\\Program Files');
+    glob(path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'Python'));
+    return roots
+      .map((r) => path.join(r, 'python.exe'))
+      .filter((p) => { try { return fs.statSync(p).isFile(); } catch { return false; } });
+  }
+
+  _env() {
+    const env = { ...process.env };
+    const extras = [];
+    const probeFfmpeg = (dir) => {
+      try { if (fs.statSync(path.join(dir, 'ffmpeg.exe')).isFile()) extras.push(dir); } catch {}
+    };
+    probeFfmpeg('C:\\ffmpeg\\bin');
+    for (const root of ['C:\\ffmpeg', os.homedir()]) {
+      try {
+        for (const e of fs.readdirSync(root)) {
+          if (/^ffmpeg/i.test(e)) probeFfmpeg(path.join(root, e, 'bin'));
+        }
+      } catch {}
     }
-    this._cmd = false;
-    return false;
+    if (extras.length && !(env.PATH || '').includes(extras[0])) env.PATH = `${extras.join(';')};${env.PATH || ''}`;
+    return env;
   }
 
   async isAvailable() {
@@ -34,10 +92,19 @@ class SpotDLService {
     return Boolean(c);
   }
 
+  versionCached() {
+    return this._ver;
+  }
+
   async version() {
     const c = await this.detect();
     if (!c) return null;
-    return this._run(c.cmd, [...c.prefix, '--version'], 15000);
+    if (this._ver) return this._ver;
+    try {
+      const v = await this._run(c.cmd, [...c.prefix, '--version'], 30000);
+      this._ver = v;
+      return v;
+    } catch { return null; }
   }
 
   createJob(urls, options = {}) {
@@ -56,7 +123,7 @@ class SpotDLService {
     };
     fs.mkdirSync(job.dir, { recursive: true });
     this._jobs.set(id, job);
-    this._run(job).catch((e) => {
+    this._execute(job).catch((e) => {
       job.status = 'error';
       job.error = e.message;
       job.progress.message = e.message;
@@ -88,7 +155,7 @@ class SpotDLService {
     return j ? j.files : [];
   }
 
-  async _run(job) {
+  async _execute(job) {
     const c = await this.detect();
     if (!c) throw new Error('spotDL n\'est pas installé. Installe avec : pip install spotDL');
 
@@ -96,23 +163,26 @@ class SpotDLService {
     job.progress.message = 'Démarrage de spotDL…';
 
     const format = job.options.format || 'mp3';
-    const quality = job.options.quality || 'best';
-    const template = path.join(job.dir, '%(artist)s - %(title)s.%(ext)s');
+    const bitrate = job.options.bitrate || 'auto';
+    const template = path.join(job.dir, '{artist} - {title}.{output-ext}');
 
     const args = [
       ...c.prefix,
       'download',
       ...job.urls,
-      '-o', template,
-      '-f', format,
-      '-q', quality,
+      '--output', template,
+      '--format', format,
+      '--bitrate', bitrate,
       '--print-errors',
       '--threads', '2',
       '--max-retries', '3',
+      '--restrict', 'ascii',
     ];
+    const ffmpeg = this._ffmpegPath();
+    if (ffmpeg) args.push('--ffmpeg', ffmpeg);
 
     return new Promise((resolve, reject) => {
-      const proc = spawn(c.cmd, args, { timeout: 900000, windowsHide: true });
+      const proc = spawn(c.cmd, args, { timeout: 900000, windowsHide: true, env: this._env() });
       let stderr = '';
       let stdout = '';
       let lastLine = '';
@@ -162,17 +232,39 @@ class SpotDLService {
     });
   }
 
-  _collect(dir) {
-    try {
-      return fs.readdirSync(dir)
-        .filter((f) => AUDIO_EXTS.has(path.extname(f).toLowerCase()))
-        .map((f) => {
-          const p = path.join(dir, f);
-          return { name: f, path: p, size: fs.statSync(p).size };
-        });
-    } catch {
-      return [];
+  _ffmpegPath() {
+    if (this._ffmpeg !== undefined) return this._ffmpeg;
+    const candidates = ['C:\\ffmpeg\\bin\\ffmpeg.exe'];
+    const roots = ['C:\\ffmpeg', os.homedir(), 'C:\\'];
+    for (const root of roots) {
+      try {
+        for (const e of fs.readdirSync(root)) {
+          if (/^ffmpeg/i.test(e)) candidates.push(path.join(root, e, 'bin', 'ffmpeg.exe'));
+        }
+      } catch {}
     }
+    for (const p of candidates) {
+      try { if (fs.statSync(p).isFile()) { this._ffmpeg = p; return p; } } catch {}
+    }
+    this._ffmpeg = null;
+    return null;
+  }
+
+  _collect(dir) {
+    const out = [];
+    const walk = (d) => {
+      let entries = [];
+      try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+      for (const e of entries) {
+        const p = path.join(d, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (AUDIO_EXTS.has(path.extname(e.name).toLowerCase())) {
+          try { out.push({ name: e.name, path: p, size: fs.statSync(p).size }); } catch {}
+        }
+      }
+    };
+    walk(dir);
+    return out.sort((a, b) => a.name.localeCompare(b.name));
   }
 
   cleanup(id) {
@@ -193,13 +285,13 @@ class SpotDLService {
 
   _probe(cmd, args) {
     return new Promise((resolve) => {
-      execFile(cmd, args, { timeout: 12000, windowsHide: true }, (err) => resolve(!err));
+      execFile(cmd, args, { timeout: 15000, windowsHide: true, env: this._env() }, (err) => resolve(!err));
     });
   }
 
   _run(cmd, args, timeout) {
     return new Promise((resolve, reject) => {
-      execFile(cmd, args, { timeout, windowsHide: true }, (err, stdout, stderr) => {
+      execFile(cmd, args, { timeout, windowsHide: true, env: this._env() }, (err, stdout, stderr) => {
         if (err) return reject(err);
         resolve((stdout || stderr || '').trim());
       });

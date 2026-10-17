@@ -240,8 +240,7 @@ app.post('/api/zip', async (req, res) => {
 
 app.get('/api/spotdl/status', async (req, res) => {
   const available = await spotdl.isAvailable();
-  const ver = available ? await spotdl.version().catch(() => null) : null;
-  res.json({ available, version: ver });
+  res.json({ available, version: available ? spotdl.versionCached() : null });
 });
 
 app.post('/api/spotdl/start', async (req, res) => {
@@ -252,7 +251,7 @@ app.post('/api/spotdl/start', async (req, res) => {
         error: 'spotDL n\'est pas installé. Installe avec : pip install spotDL (et ffmpeg dans le PATH)',
       });
     }
-    const { urls, format = 'mp3', quality = 'best' } = req.body || {};
+    const { urls, format = 'mp3', bitrate = 'auto' } = req.body || {};
     if (!Array.isArray(urls) || urls.length === 0) {
       return res.status(400).json({ error: 'Aucune URL fournie' });
     }
@@ -268,7 +267,7 @@ app.post('/api/spotdl/start', async (req, res) => {
       }
     }
     spotdl.cleanupOld();
-    const job = spotdl.createJob(urls.map(String), { format, quality });
+    const job = spotdl.createJob(urls.map(String), { format, bitrate });
     res.json({ jobId: job.id });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -300,7 +299,7 @@ app.get('/api/spotdl/file/:id', async (req, res) => {
   const manifest = {
     tool: 'spotDL',
     format: job.options.format || 'mp3',
-    quality: job.options.quality || 'best',
+    bitrate: job.options.bitrate || 'auto',
     urls: job.urls,
     downloadedAt: new Date().toISOString(),
     files: files.map((f) => ({ name: f.name, size: f.size })),
@@ -317,4 +316,7 @@ app.listen(PORT, () => {
   if (!isConfigured()) {
     console.log('SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET missing — copy .env.example to .env');
   }
+  spotdl.detect().then((c) => {
+    console.log(c ? `spotDL ready → ${c.cmd} ${c.prefix.join(' ')}` : 'spotDL not installed (audio download disabled)');
+  }).catch(() => {});
 });
