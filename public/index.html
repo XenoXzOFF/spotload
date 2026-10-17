@@ -10,6 +10,32 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <div id="splash" class="skeleton-loader" aria-hidden="true">
+    <div class="sk-topbar">
+      <div class="sk-topbar-left">
+        <div class="sk-logo"></div>
+        <div class="sk-logo-text"></div>
+      </div>
+      <div class="sk-search">
+        <div class="sk-search-bar"></div>
+        <div class="sk-search-btn"></div>
+      </div>
+      <div class="sk-topbar-right">
+        <div class="sk-circle sk-circle-sm"></div>
+        <div class="sk-circle sk-circle-sm"></div>
+        <div class="sk-circle sk-circle-avatar"></div>
+      </div>
+    </div>
+    <div class="sk-grid">
+      <div class="sk-card"><div class="sk-thumb"></div><div class="sk-meta"><div class="sk-avatar"></div><div class="sk-lines"><div class="sk-line sk-line-lg"></div><div class="sk-line sk-line-sm"></div></div></div></div>
+      <div class="sk-card"><div class="sk-thumb"></div><div class="sk-meta"><div class="sk-avatar"></div><div class="sk-lines"><div class="sk-line sk-line-md"></div><div class="sk-line sk-line-sm"></div></div></div></div>
+      <div class="sk-card"><div class="sk-thumb"></div><div class="sk-meta"><div class="sk-avatar"></div><div class="sk-lines"><div class="sk-line sk-line-lg"></div><div class="sk-line sk-line-sm"></div></div></div></div>
+      <div class="sk-card"><div class="sk-thumb"></div><div class="sk-meta"><div class="sk-avatar"></div><div class="sk-lines"><div class="sk-line sk-line-md"></div><div class="sk-line sk-line-sm"></div></div></div></div>
+      <div class="sk-card"><div class="sk-thumb"></div><div class="sk-meta"><div class="sk-avatar"></div><div class="sk-lines"><div class="sk-line sk-line-lg"></div><div class="sk-line sk-line-sm"></div></div></div></div>
+      <div class="sk-card"><div class="sk-thumb"></div><div class="sk-meta"><div class="sk-avatar"></div><div class="sk-lines"><div class="sk-line sk-line-md"></div><div class="sk-line sk-line-sm"></div></div></div></div>
+    </div>
+  </div>
+
   <header class="topbar">
     <div class="logo">
       <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor" aria-hidden="true">
@@ -160,5 +186,13 @@
   </footer>
 
   <script src="app.js"></script>
+  <script>
+    (function(){
+      var splash=document.getElementById('splash');
+      if(splash){setTimeout(function(){splash.classList.add('splash-hidden');setTimeout(function(){splash.remove()},600)},2400)}
+      var topbar=document.querySelector('.topbar');
+      if(topbar){window.addEventListener('scroll',function(){topbar.classList.toggle('scrolled',window.scrollY>10)},{passive:true})}
+    })();
+  </script>
 </body>
 </html>
