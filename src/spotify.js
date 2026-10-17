@@ -37,8 +37,9 @@ async function getAppToken() {
 }
 
 async function api(path, params, userToken) {
+  let fellBack = false;
   for (let attempt = 0; attempt < 6; attempt++) {
-    const token = userToken || (await getAppToken());
+    const token = (userToken && !fellBack ? userToken : null) || (await getAppToken());
     const url = new URL(API_BASE + path);
     if (params) {
       for (const [k, v] of Object.entries(params)) {
@@ -55,6 +56,10 @@ async function api(path, params, userToken) {
       tokenCache.token = null;
       continue;
     }
+    if (res.status === 401 && userToken && !fellBack) {
+      fellBack = true;
+      continue;
+    }
     if (res.status === 401 && userToken) {
       throw new Error('Session Spotify expirée — reconnecte-toi');
     }
@@ -62,8 +67,22 @@ async function api(path, params, userToken) {
       throw new Error('Introuvable sur Spotify (lien invalide, privé ou supprimé)');
     }
     if (res.status === 403) {
+      if (userToken && !fellBack) {
+        fellBack = true;
+        continue;
+      }
+      const body = await res.json().catch(() => null);
+      const apiMsg = body && body.error && body.error.message ? body.error.message : '';
+      if (/insufficient client scope/i.test(apiMsg)) {
+        throw new Error(
+          "Accès refusé (403) — scopes insuffisants : déconnecte-toi puis reconnecte-toi pour régénérer le token avec les bons droits."
+        );
+      }
+      if (apiMsg) {
+        throw new Error(`Accès refusé (403) : ${apiMsg}`);
+      }
       throw new Error(
-        "Accès refusé (403) — active l'API Web dans les paramètres de ton application Spotify (Dashboard → ton app → Product completion → Web API)"
+        "Accès refusé (403) — active l'API Web dans le Dashboard Spotify (Product completion → Web API), puis déconnecte/reconnecte."
       );
     }
     if (!res.ok) {
@@ -317,7 +336,19 @@ async function fetchLibrary(userToken) {
 }
 
 async function searchTracks(query, userToken, limit = 20) {
-  const data = await api('/search', { q: query, type: 'track', limit }, userToken);
+  let effectiveLimit = limit;
+  if (!userToken) effectiveLimit = Math.min(limit, 10);
+  let data;
+  try {
+    data = await api('/search', { q: query, type: 'track', limit: effectiveLimit }, userToken);
+  } catch (e) {
+    if (/invalid limit/i.test(e.message) && effectiveLimit > 10) {
+      effectiveLimit = 10;
+      data = await api('/search', { q: query, type: 'track', limit: effectiveLimit }, userToken);
+    } else {
+      throw e;
+    }
+  }
   const items = (data.tracks && data.tracks.items) || [];
   return items.map((t) => normalizeTrack(t));
 }
