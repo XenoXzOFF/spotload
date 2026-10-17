@@ -56,7 +56,12 @@ async function api(path, params, userToken) {
         if (v != null) url.searchParams.set(k, v);
       }
     }
+    const t0 = Date.now();
     const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    const ms = Date.now() - t0;
+    if (ms > 400 || res.status === 429) {
+      console.log(`[api] ${ms}ms ${res.status} ${path}`);
+    }
     if (res.status === 429) {
       const waitMs = Math.min(Number(res.headers.get('retry-after') || 1) * 1000, 15000);
       await new Promise((r) => setTimeout(r, waitMs));

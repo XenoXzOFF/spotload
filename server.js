@@ -36,6 +36,15 @@ app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
+app.use('/api', (req, res, next) => {
+  const t0 = Date.now();
+  res.on('finish', () => {
+    const ms = Date.now() - t0;
+    if (ms > 600) console.log(`[route] ${ms}ms ${req.method} ${req.originalUrl}`);
+  });
+  next();
+});
+
 async function userTokenFrom(req) {
   const session = getSession(req);
   if (!session) return null;
