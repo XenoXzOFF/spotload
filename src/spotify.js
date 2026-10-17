@@ -43,8 +43,11 @@ function needsUserContext(path) {
 }
 
 async function api(path, params, userToken) {
-  let fellBack = false;
   const needsUser = needsUserContext(path);
+  if (needsUser && !userToken) {
+    throw new Error('Connexion Spotify requise — reconnecte-toi pour lire cet element');
+  }
+  let fellBack = false;
   for (let attempt = 0; attempt < 6; attempt++) {
     const token = (userToken && !fellBack ? userToken : null) || (await getAppToken());
     const url = new URL(API_BASE + path);
@@ -60,9 +63,6 @@ async function api(path, params, userToken) {
       continue;
     }
     if (needsUser && (res.status === 401 || res.status === 403)) {
-      if (!userToken) {
-        throw new Error('Connexion Spotify requise — reconnecte-toi pour lire cet element');
-      }
       throw new Error(`Session Spotify refusee (HTTP ${res.status} sur ${path}) — reconnecte-toi`);
     }
     if (res.status === 401 && !userToken && attempt < 2) {
@@ -174,12 +174,8 @@ async function fetchAlbum(id, userToken) {
   }
   const full = new Map();
   const ids = items.map((t) => t.id).filter(Boolean);
-  for (let i = 0; i < ids.length; i += 50) {
-    const chunk = ids.slice(i, i + 50);
-    const res = await api('/tracks', { ids: chunk.join(','), market: market() }, userToken);
-    for (const t of res.tracks || []) {
-      if (t && t.id) full.set(t.id, t);
-    }
+  for (const t of await fetchTracksBulk(ids, userToken, market())) {
+    if (t && t.id) full.set(t.id, t);
   }
   const tracks = items.map((s) => full.get(s.id) || s).map((t) => normalizeTrack(t, cover));
   const artists = (meta.artists || []).map((a) => a.name).join(', ');
@@ -371,15 +367,47 @@ async function searchTracks(query, userToken, limit = 20) {
   return items.map((t) => normalizeTrack(t));
 }
 
+async function fetchTracksBulk(ids, userToken, marketCode) {
+  const unique = [...new Set(ids.map(String).filter(Boolean))];
+  if (!unique.length) return [];
+  if (userToken) {
+    try {
+      const out = [];
+      for (let i = 0; i < unique.length; i += 50) {
+        const chunk = unique.slice(i, i + 50);
+        const params = { ids: chunk.join(',') };
+        if (marketCode) params.market = marketCode;
+        const res = await api('/tracks', params, userToken);
+        for (const t of res.tracks || []) {
+          if (t) out.push(t);
+        }
+      }
+      return out;
+    } catch (e) {
+      if (/reconnecte-toi|expirée|scope/i.test(e.message || '')) throw e;
+    }
+  }
+  const out = [];
+  for (let i = 0; i < unique.length; i += 6) {
+    const batch = unique.slice(i, i + 6);
+    const settled = await Promise.allSettled(
+      batch.map((id) => {
+        const params = marketCode ? { market: marketCode } : null;
+        return api(`/tracks/${id}`, params, userToken);
+      })
+    );
+    for (const r of settled) {
+      if (r.status === 'fulfilled' && r.value) out.push(r.value);
+    }
+  }
+  return out;
+}
 async function fetchTracksByIds(ids, userToken) {
   const tracks = [];
   const unique = [...new Set(ids.map(String))];
-  for (let i = 0; i < unique.length; i += 50) {
-    const chunk = unique.slice(i, i + 50);
-    const res = await api('/tracks', { ids: chunk.join(',') }, userToken);
-    for (const t of res.tracks || []) {
-      if (t) tracks.push(normalizeTrack(t));
-    }
+  const raw = await fetchTracksBulk(unique, userToken);
+  for (const t of raw) {
+    if (t) tracks.push(normalizeTrack(t));
   }
   const order = new Map(unique.map((id, i) => [id, i]));
   tracks.sort((a, b) => (order.get(String(a.id)) ?? 0) - (order.get(String(b.id)) ?? 0));

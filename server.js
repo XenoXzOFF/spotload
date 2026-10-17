@@ -157,7 +157,7 @@ app.post('/api/collections', async (req, res) => {
 app.post('/api/library-collection', async (req, res) => {
   try {
     const token = await userTokenFrom(req);
-    if (!token) return res.status(401).json({ error: 'Non connecté' });
+    if (!token) return res.status(401).json({ error: 'Non connecté', relogin: true });
     const { kind } = req.body || {};
     if (kind === 'liked') {
       const col = await fetchLikedTracksCollection(token);
@@ -165,6 +165,10 @@ app.post('/api/library-collection', async (req, res) => {
     }
     return res.status(400).json({ error: 'Type inconnu' });
   } catch (e) {
+    if (/reconnecte-toi|expirée|scope/i.test(e.message || '')) {
+      destroySession(req);
+      return res.status(401).json({ error: 'Session expirée — reconnecte-toi avec Spotify', relogin: true });
+    }
     res.status(500).json({ error: e.message });
   }
 });
@@ -237,6 +241,10 @@ app.post('/api/zip', async (req, res) => {
   } catch (e) {
     console.error('ZIP error:', e);
     if (res.headersSent) return res.destroy(e);
+    if (/reconnecte-toi|expirée|scope/i.test(e.message || '')) {
+      destroySession(req);
+      return res.status(401).json({ error: 'Session expirée — reconnecte-toi avec Spotify', relogin: true });
+    }
     res.status(500).json({ error: e.message });
   }
 });
