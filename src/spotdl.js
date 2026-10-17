@@ -141,6 +141,8 @@ class SpotDLService {
       fileCount: j.files.length,
       error: j.error,
       partial: j.partial,
+      format: j.options?.format || 'mp3',
+      bitrate: j.options?.bitrate || 'auto',
       totalBytes: j.files.reduce((s, f) => s + f.size, 0),
     };
   }

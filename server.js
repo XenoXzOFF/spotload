@@ -1,5 +1,8 @@
 require('dotenv').config();
 
+process.on('unhandledRejection', (e) => console.error('unhandledRejection:', e));
+process.on('uncaughtException', (e) => console.error('uncaughtException:', e));
+
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -281,6 +284,7 @@ app.get('/api/spotdl/job/:id', (req, res) => {
 });
 
 app.get('/api/spotdl/file/:id', async (req, res) => {
+ try {
   const job = spotdl.getJob(req.params.id);
   if (!job) return res.status(404).json({ error: 'Téléchargement introuvable' });
   if (job.status !== 'done' && job.status !== 'partial') {
@@ -298,9 +302,9 @@ app.get('/api/spotdl/file/:id', async (req, res) => {
   for (const f of files) archive.file(f.path, { name: f.name });
   const manifest = {
     tool: 'spotDL',
-    format: job.options.format || 'mp3',
-    bitrate: job.options.bitrate || 'auto',
-    urls: job.urls,
+    format: job.format,
+    bitrate: job.bitrate,
+    urls: job.urls || [],
     downloadedAt: new Date().toISOString(),
     files: files.map((f) => ({ name: f.name, size: f.size })),
     partial: job.partial,
@@ -308,6 +312,11 @@ app.get('/api/spotdl/file/:id', async (req, res) => {
   archive.append(JSON.stringify(manifest, null, 2), { name: 'manifest.json' });
   await archive.finalize();
   setTimeout(() => spotdl.cleanup(req.params.id), 10000);
+ } catch (e) {
+   console.error('spotdl file error:', e);
+   if (!res.headersSent) res.status(500).json({ error: e.message });
+   else res.destroy();
+ }
 });
 
 app.listen(PORT, () => {
