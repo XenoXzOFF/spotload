@@ -36,8 +36,15 @@ async function getAppToken() {
   return tokenCache.token;
 }
 
+const USER_ONLY_PATTERNS = [/^\/me(\/|$)/, /^\/playlists\//, /^\/artists\/[^/]+\/top-tracks/];
+
+function needsUserContext(path) {
+  return USER_ONLY_PATTERNS.some((re) => re.test(path));
+}
+
 async function api(path, params, userToken) {
   let fellBack = false;
+  const needsUser = needsUserContext(path);
   for (let attempt = 0; attempt < 6; attempt++) {
     const token = (userToken && !fellBack ? userToken : null) || (await getAppToken());
     const url = new URL(API_BASE + path);
@@ -52,42 +59,44 @@ async function api(path, params, userToken) {
       await new Promise((r) => setTimeout(r, waitMs));
       continue;
     }
+    if (needsUser && (res.status === 401 || res.status === 403)) {
+      if (!userToken) {
+        throw new Error('Connexion Spotify requise — reconnecte-toi pour lire cet element');
+      }
+      throw new Error(`Session Spotify refusee (HTTP ${res.status} sur ${path}) — reconnecte-toi`);
+    }
     if (res.status === 401 && !userToken && attempt < 2) {
       tokenCache.token = null;
       continue;
     }
-    if (res.status === 401 && userToken && !fellBack) {
+    if ((res.status === 401 || res.status === 403) && userToken && !fellBack) {
       fellBack = true;
       continue;
     }
-    if (res.status === 401 && userToken) {
-      throw new Error('Session Spotify expirée — reconnecte-toi');
-    }
     if (res.status === 404) {
-      throw new Error('Introuvable sur Spotify (lien invalide, privé ou supprimé)');
+      throw new Error('Introuvable sur Spotify (lien invalide, prive ou supprime)');
+    }
+    if (res.status === 401 && userToken) {
+      throw new Error('Session Spotify expiree — reconnecte-toi');
     }
     if (res.status === 403) {
-      if (userToken && !fellBack) {
-        fellBack = true;
-        continue;
-      }
       const body = await res.json().catch(() => null);
       const apiMsg = body && body.error && body.error.message ? body.error.message : '';
       if (/insufficient client scope/i.test(apiMsg)) {
         throw new Error(
-          "Accès refusé (403) — scopes insuffisants : déconnecte-toi puis reconnecte-toi pour régénérer le token avec les bons droits."
+          'Acces refuse (403) — scopes insuffisants : deconnecte-toi puis reconnecte-toi pour regenerer le token avec les bons droits.'
         );
       }
       if (apiMsg) {
-        throw new Error(`Accès refusé (403) : ${apiMsg}`);
+        throw new Error(`Acces refuse (403) sur ${path} : ${apiMsg}`);
       }
       throw new Error(
-        "Accès refusé (403) — active l'API Web dans le Dashboard Spotify (Product completion → Web API), puis déconnecte/reconnecte."
+        `Acces refuse (403) sur ${path} — active l'API Web dans le Dashboard Spotify (Product completion -> Web API), puis deconnecte/reconnecte.`
       );
     }
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      throw new Error(`Spotify API ${res.status} : ${text.slice(0, 200)}`);
+      throw new Error(`Spotify API ${res.status} sur ${path} : ${text.slice(0, 200)}`);
     }
     return res.json();
   }
