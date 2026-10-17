@@ -1,5 +1,8 @@
 require('dotenv').config();
 
+process.on('unhandledRejection', (e) => console.error('unhandledRejection:', e));
+process.on('uncaughtException', (e) => console.error('uncaughtException:', e));
+
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -16,6 +19,7 @@ const {
   fetchTracksByIds,
 } = require('./src/spotify');
 const { writeZip } = require('./src/zip');
+const spotdl = require('./src/spotdl');
 const {
   getOrCreateSession,
   getSession,
@@ -89,11 +93,16 @@ app.get('/api/me', async (req, res) => {
 app.get('/api/library', async (req, res) => {
   try {
     const token = await userTokenFrom(req);
-    if (!token) return res.status(401).json({ error: 'Non connecté' });
+    if (!token) return res.status(401).json({ error: 'Non connecté', relogin: true });
     const library = await fetchLibrary(token);
     res.json(library);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    const msg = e.message || '';
+    if (/reconnecte-toi|expirée|scope/i.test(msg)) {
+      destroySession(req);
+      return res.status(401).json({ error: 'Session expirée — reconnecte-toi avec Spotify', relogin: true });
+    }
+    res.status(500).json({ error: msg });
   }
 });
 
@@ -126,12 +135,18 @@ app.post('/api/collections', async (req, res) => {
     const userToken = await userTokenFrom(req);
     const collections = [];
     const errors = [];
+    let authFailed = false;
     for (const raw of urls) {
       try {
         collections.push(await resolveCollection(raw, userToken));
       } catch (e) {
+        if (/reconnecte-toi|expirée|scope/i.test(e.message || '')) authFailed = true;
         errors.push({ url: String(raw).slice(0, 300), message: e.message });
       }
+    }
+    if (authFailed && collections.length === 0) {
+      destroySession(req);
+      return res.status(401).json({ error: 'Session expirée — reconnecte-toi avec Spotify', relogin: true });
     }
     res.json({ collections, errors });
   } catch (e) {
@@ -142,7 +157,7 @@ app.post('/api/collections', async (req, res) => {
 app.post('/api/library-collection', async (req, res) => {
   try {
     const token = await userTokenFrom(req);
-    if (!token) return res.status(401).json({ error: 'Non connecté' });
+    if (!token) return res.status(401).json({ error: 'Non connecté', relogin: true });
     const { kind } = req.body || {};
     if (kind === 'liked') {
       const col = await fetchLikedTracksCollection(token);
@@ -150,6 +165,10 @@ app.post('/api/library-collection', async (req, res) => {
     }
     return res.status(400).json({ error: 'Type inconnu' });
   } catch (e) {
+    if (/reconnecte-toi|expirée|scope/i.test(e.message || '')) {
+      destroySession(req);
+      return res.status(401).json({ error: 'Session expirée — reconnecte-toi avec Spotify', relogin: true });
+    }
     res.status(500).json({ error: e.message });
   }
 });
@@ -222,8 +241,90 @@ app.post('/api/zip', async (req, res) => {
   } catch (e) {
     console.error('ZIP error:', e);
     if (res.headersSent) return res.destroy(e);
+    if (/reconnecte-toi|expirée|scope/i.test(e.message || '')) {
+      destroySession(req);
+      return res.status(401).json({ error: 'Session expirée — reconnecte-toi avec Spotify', relogin: true });
+    }
     res.status(500).json({ error: e.message });
   }
+});
+
+app.get('/api/spotdl/status', async (req, res) => {
+  const available = await spotdl.isAvailable();
+  res.json({ available, version: available ? spotdl.versionCached() : null });
+});
+
+app.post('/api/spotdl/start', async (req, res) => {
+  try {
+    const available = await spotdl.isAvailable();
+    if (!available) {
+      return res.status(500).json({
+        error: 'spotDL n\'est pas installé. Installe avec : pip install spotDL (et ffmpeg dans le PATH)',
+      });
+    }
+    const { urls, format = 'mp3', bitrate = 'auto' } = req.body || {};
+    if (!Array.isArray(urls) || urls.length === 0) {
+      return res.status(400).json({ error: 'Aucune URL fournie' });
+    }
+    if (urls.length > 25) {
+      return res.status(400).json({ error: 'Maximum 25 URLs par téléchargement' });
+    }
+    const valid = /^https:\/\/open\.spotify\.com\/(track|album|playlist)\//;
+    const validUri = /^spotify:(track|album|playlist):/;
+    for (const u of urls) {
+      const s = String(u);
+      if (!valid.test(s) && !validUri.test(s)) {
+        return res.status(400).json({ error: `URL Spotify invalide : ${s.slice(0, 120)}` });
+      }
+    }
+    spotdl.cleanupOld();
+    const job = spotdl.createJob(urls.map(String), { format, bitrate });
+    res.json({ jobId: job.id });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/spotdl/job/:id', (req, res) => {
+  const job = spotdl.getJob(req.params.id);
+  if (!job) return res.status(404).json({ error: 'Téléchargement introuvable ou expiré' });
+  res.json(job);
+});
+
+app.get('/api/spotdl/file/:id', async (req, res) => {
+ try {
+  const job = spotdl.getJob(req.params.id);
+  if (!job) return res.status(404).json({ error: 'Téléchargement introuvable' });
+  if (job.status !== 'done' && job.status !== 'partial') {
+    return res.status(409).json({ error: 'Le téléchargement n\'est pas terminé' });
+  }
+  const files = spotdl.getJobFiles(req.params.id);
+  if (files.length === 0) return res.status(404).json({ error: 'Aucun fichier téléchargé' });
+  const archiver = require('archiver');
+  const stamp = new Date().toISOString().slice(0, 10);
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', `attachment; filename="spotload_audio_${stamp}.zip"`);
+  const archive = archiver('zip', { zlib: { level: 5 } });
+  archive.on('error', (err) => { if (!res.headersSent) res.status(500).json({ error: err.message }); else res.destroy(err); });
+  archive.pipe(res);
+  for (const f of files) archive.file(f.path, { name: f.name });
+  const manifest = {
+    tool: 'spotDL',
+    format: job.format,
+    bitrate: job.bitrate,
+    urls: job.urls || [],
+    downloadedAt: new Date().toISOString(),
+    files: files.map((f) => ({ name: f.name, size: f.size })),
+    partial: job.partial,
+  };
+  archive.append(JSON.stringify(manifest, null, 2), { name: 'manifest.json' });
+  await archive.finalize();
+  setTimeout(() => spotdl.cleanup(req.params.id), 10000);
+ } catch (e) {
+   console.error('spotdl file error:', e);
+   if (!res.headersSent) res.status(500).json({ error: e.message });
+   else res.destroy();
+ }
 });
 
 app.listen(PORT, () => {
@@ -232,4 +333,7 @@ app.listen(PORT, () => {
   if (!isConfigured()) {
     console.log('SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET missing — copy .env.example to .env');
   }
+  spotdl.detect().then((c) => {
+    console.log(c ? `spotDL ready → ${c.cmd} ${c.prefix.join(' ')}` : 'spotDL not installed (audio download disabled)');
+  }).catch(() => {});
 });
