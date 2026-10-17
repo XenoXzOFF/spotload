@@ -16,6 +16,7 @@ const {
   fetchTracksByIds,
 } = require('./src/spotify');
 const { writeZip } = require('./src/zip');
+const spotdl = require('./src/spotdl');
 const {
   getOrCreateSession,
   getSession,
@@ -235,6 +236,79 @@ app.post('/api/zip', async (req, res) => {
     if (res.headersSent) return res.destroy(e);
     res.status(500).json({ error: e.message });
   }
+});
+
+app.get('/api/spotdl/status', async (req, res) => {
+  const available = await spotdl.isAvailable();
+  const ver = available ? await spotdl.version().catch(() => null) : null;
+  res.json({ available, version: ver });
+});
+
+app.post('/api/spotdl/start', async (req, res) => {
+  try {
+    const available = await spotdl.isAvailable();
+    if (!available) {
+      return res.status(500).json({
+        error: 'spotDL n\'est pas installé. Installe avec : pip install spotDL (et ffmpeg dans le PATH)',
+      });
+    }
+    const { urls, format = 'mp3', quality = 'best' } = req.body || {};
+    if (!Array.isArray(urls) || urls.length === 0) {
+      return res.status(400).json({ error: 'Aucune URL fournie' });
+    }
+    if (urls.length > 25) {
+      return res.status(400).json({ error: 'Maximum 25 URLs par téléchargement' });
+    }
+    const valid = /^https:\/\/open\.spotify\.com\/(track|album|playlist)\//;
+    const validUri = /^spotify:(track|album|playlist):/;
+    for (const u of urls) {
+      const s = String(u);
+      if (!valid.test(s) && !validUri.test(s)) {
+        return res.status(400).json({ error: `URL Spotify invalide : ${s.slice(0, 120)}` });
+      }
+    }
+    spotdl.cleanupOld();
+    const job = spotdl.createJob(urls.map(String), { format, quality });
+    res.json({ jobId: job.id });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/spotdl/job/:id', (req, res) => {
+  const job = spotdl.getJob(req.params.id);
+  if (!job) return res.status(404).json({ error: 'Téléchargement introuvable ou expiré' });
+  res.json(job);
+});
+
+app.get('/api/spotdl/file/:id', async (req, res) => {
+  const job = spotdl.getJob(req.params.id);
+  if (!job) return res.status(404).json({ error: 'Téléchargement introuvable' });
+  if (job.status !== 'done' && job.status !== 'partial') {
+    return res.status(409).json({ error: 'Le téléchargement n\'est pas terminé' });
+  }
+  const files = spotdl.getJobFiles(req.params.id);
+  if (files.length === 0) return res.status(404).json({ error: 'Aucun fichier téléchargé' });
+  const archiver = require('archiver');
+  const stamp = new Date().toISOString().slice(0, 10);
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', `attachment; filename="spotload_audio_${stamp}.zip"`);
+  const archive = archiver('zip', { zlib: { level: 5 } });
+  archive.on('error', (err) => { if (!res.headersSent) res.status(500).json({ error: err.message }); else res.destroy(err); });
+  archive.pipe(res);
+  for (const f of files) archive.file(f.path, { name: f.name });
+  const manifest = {
+    tool: 'spotDL',
+    format: job.options.format || 'mp3',
+    quality: job.options.quality || 'best',
+    urls: job.urls,
+    downloadedAt: new Date().toISOString(),
+    files: files.map((f) => ({ name: f.name, size: f.size })),
+    partial: job.partial,
+  };
+  archive.append(JSON.stringify(manifest, null, 2), { name: 'manifest.json' });
+  await archive.finalize();
+  setTimeout(() => spotdl.cleanup(req.params.id), 10000);
 });
 
 app.listen(PORT, () => {
